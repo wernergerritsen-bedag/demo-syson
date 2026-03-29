@@ -1,0 +1,154 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: syson
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: syson-db-secret
+  namespace: syson
+type: Opaque
+stringData:
+  POSTGRES_USER: username
+  POSTGRES_PASSWORD: password
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: syson-config
+  namespace: syson
+data:
+  POSTGRES_DB: postgres
+  SPRING_DATASOURCE_URL: jdbc:postgresql://database/postgres
+  SIRIUS_COMPONENTS_CORS_ALLOWEDORIGINPATTERNS: "*"
+  SERVER_PORT: "8080"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database
+  namespace: syson
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: database
+  template:
+    metadata:
+      labels:
+        app: database
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: syson-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: syson-db-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: syson-db-secret
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: postgres-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: database
+  namespace: syson
+spec:
+  selector:
+    app: database
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  namespace: syson
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: syson-app
+  template:
+    metadata:
+      labels:
+        app: syson-app
+    spec:
+      containers:
+        - name: syson
+          image: eclipsesyson/syson:v2026.1.0
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_DATASOURCE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: syson-config
+                  key: SPRING_DATASOURCE_URL
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: syson-db-secret
+                  key: POSTGRES_USER
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: syson-db-secret
+                  key: POSTGRES_PASSWORD
+            - name: SIRIUS_COMPONENTS_CORS_ALLOWEDORIGINPATTERNS
+              valueFrom:
+                configMapKeyRef:
+                  name: syson-config
+                  key: SIRIUS_COMPONENTS_CORS_ALLOWEDORIGINPATTERNS
+            - name: SERVER_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: syson-config
+                  key: SERVER_PORT
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app
+  namespace: syson
+spec:
+  selector:
+    app: syson-app
+  ports:
+    - name: http
+      port: 8087
+      targetPort: 8080
+  type: NodePort
+
